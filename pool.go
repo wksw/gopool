@@ -53,8 +53,9 @@ type Pool struct {
 	// pool capacity
 	capacity uint64
 	// max number of goroutine in pool
-	maxActive    uint64
-	exitCallback func()
+	maxActive     uint64
+	exitCallback  func()
+	panicCallback func(r interface{})
 }
 
 // New generate a new pool with pool size and handler function
@@ -82,6 +83,11 @@ func New(capacity, maxActive uint64, handler func(task interface{})) (*Pool, err
 // WithExitCallback set exit callback handler
 func (p *Pool) WithExitCallback(handler func()) {
 	p.exitCallback = handler
+}
+
+// WithPanicCallback set panic callback handler
+func (p *Pool) WithPanicCallback(handler func(r interface{})) {
+	p.panicCallback = handler
 }
 
 // WithMaxActive set max actived goroutine
@@ -188,6 +194,13 @@ func (p *Pool) startWorker(workerNum uint64) {
 	d := 5 * time.Second
 	ticker := time.NewTicker(d)
 	defer ticker.Stop()
+	defer func() {
+		if r := recover(); r != nil {
+			if p.panicCallback != nil {
+				p.panicCallback(r)
+			}
+		}
+	}()
 	for {
 		select {
 		case <-ticker.C:

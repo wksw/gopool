@@ -1,7 +1,7 @@
 ## Install
 
 ```shell
-go get github.com/wksw/go-pool
+go get github.com/wksw/gopool
 ```
 
 ## Use
@@ -12,11 +12,9 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
-	"sync"
 	"time"
 
-	gopool "github.com/wksw/go-pool"
+	"github.com/wksw/gopool"
 )
 
 type task struct {
@@ -45,27 +43,16 @@ func main() {
 	}
 	pool.WithExitCallback(func() {
 		fmt.Println("pool closed")
-		os.Exit(0)
 	})
-	wg := sync.WaitGroup{}
 	for i := 0; i < 10; i++ {
-		go func(i int) {
-			wg.Add(1)
-			if err := pool.Add(&task{name: fmt.Sprintf("task_%d", i)}); err != nil {
-				fmt.Println("-----", err.Error())
-			}
-			wg.Done()
-		}(i)
+		pool.Add(&task{name: fmt.Sprintf("task_%d", i)})
 	}
-	wg.Wait()
 	fmt.Println("close pool")
 	pool.Close()
 	for i := 0; i < 10; i++ {
 		if err := pool.Add(&task{name: fmt.Sprintf("task_close_%d", i)}); err != nil {
 			fmt.Println("add task fail", err.Error())
 		}
-	}
-	for {
 	}
 }
 ```

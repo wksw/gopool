@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	gopool "github.com/wksw/go-pool"
+	"github.com/wksw/gopool"
 )
 
 type task struct {

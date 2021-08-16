@@ -39,11 +39,8 @@ type Pool struct {
 	jobs chan interface{}
 	// job handler callback function
 	handler func(job interface{})
-	// pool exit signal
-	poolExit chan struct{}
 	// worker exit signal
-	workerExit chan struct{}
-	m          sync.RWMutex
+	m sync.RWMutex
 	// pool status
 	status PoolStatus
 	// the number of running goroutine
@@ -56,6 +53,7 @@ type Pool struct {
 	maxActive     uint64
 	exitCallback  func()
 	panicCallback func(r interface{})
+	interval      time.Duration
 }
 
 // New generate a new pool with pool size and handler function
@@ -68,15 +66,14 @@ func New(capacity, maxActive uint64, handler func(task interface{})) (*Pool, err
 	}
 
 	pool := &Pool{
-		capacity:   capacity,
-		jobs:       make(chan interface{}, capacity),
-		poolExit:   make(chan struct{}),
-		workerExit: make(chan struct{}),
-		status:     PoolRunning,
-		handler:    handler,
-		maxActive:  maxActive,
+		capacity:  capacity,
+		jobs:      make(chan interface{}, capacity),
+		status:    PoolRunning,
+		handler:   handler,
+		maxActive: maxActive,
+		interval:  time.Minute,
 	}
-	pool.start()
+	pool.increaseWorker()
 	return pool, nil
 }
 
@@ -147,37 +144,18 @@ func (p *Pool) Close() error {
 		return ErrPoolExit
 	}
 	// send exit signal to notice stop add new task
-	close(p.poolExit)
+	p.setStatus(PoolExiting)
+	// waiting for all tasks processed
+	p.waitTaskProcessed()
+	// close job channel to notice goroutine to exit
+	close(p.jobs)
+	// waiting for all goroutine exit
+	p.waitWorkerExit()
+	if p.exitCallback != nil {
+		p.exitCallback()
+	}
+	p.setStatus(PoolExit)
 	return nil
-}
-
-// start a goroutine to waiting for recive job
-// waiting for pool exit signal
-func (p *Pool) start() {
-	p.increaseWorker()
-	go func() {
-		for {
-			select {
-			case _, ok := <-p.poolExit:
-				if !ok {
-					// stop add new task
-					p.setStatus(PoolExiting)
-					// wait all task process finish
-					p.waitTaskProcessed()
-					// close job channel
-					close(p.jobs)
-					// close workers channel
-					close(p.workerExit)
-					// call exit callback func
-					if p.exitCallback != nil {
-						p.exitCallback()
-					}
-					p.setStatus(PoolExit)
-					return
-				}
-			}
-		}
-	}()
 }
 
 // wait for all tasks already processed
@@ -189,10 +167,18 @@ func (p *Pool) waitTaskProcessed() {
 	}
 }
 
+// waiting for all workers exit
+func (p *Pool) waitWorkerExit() {
+	for {
+		if p.Workers() == 0 {
+			return
+		}
+	}
+}
+
 // start a worker to process job
 func (p *Pool) startWorker(workerNum uint64) {
-	d := 5 * time.Second
-	ticker := time.NewTicker(d)
+	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
 	defer func() {
 		if r := recover(); r != nil {
@@ -209,7 +195,7 @@ func (p *Pool) startWorker(workerNum uint64) {
 				p.decreaseWorker(workerNum)
 				return
 			}
-			ticker.Reset(d)
+			ticker.Reset(p.interval)
 		case task, ok := <-p.jobs:
 			p.increaseRunner()
 			if !ok {
@@ -218,7 +204,7 @@ func (p *Pool) startWorker(workerNum uint64) {
 				return
 			}
 			p.handler(task)
-			ticker.Reset(d)
+			ticker.Reset(p.interval)
 			if p.Workers() < p.MaxActive() && p.PenddingJobs() > int(p.Capacity()/2) {
 				p.increaseWorker()
 			}
